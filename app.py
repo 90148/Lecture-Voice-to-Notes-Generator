@@ -1,14 +1,17 @@
 import streamlit as st
 import speech_recognition as sr
-from transformers import pipeline
 import nltk
+from nltk.tokenize import sent_tokenize
+from nltk.probability import FreqDist
+from nltk.corpus import stopwords
 import tempfile
 import os
+import string
 
-nltk.download('punkt')
-
-# Load summarization model
-summarizer = pipeline("summarization", model="facebook/bart-large-cnn")
+# Download required NLTK data
+nltk.download('punkt', quiet=True)
+nltk.download('punkt_tab', quiet=True)
+nltk.download('stopwords', quiet=True)
 
 st.title("🎤 Lecture Voice-to-Notes Generator")
 st.write("Upload your lecture audio file and generate notes, quizzes, and flashcards automatically!")
@@ -40,13 +43,47 @@ def summarize_text(text):
     if not text.strip():
         return "⚠️ No clear speech detected to summarize."
 
-    summary = summarizer(
-        text,
-        max_length=200,
-        min_length=50,
-        do_sample=False
-    )
-    return summary[0]['summary_text']
+    try:
+        # Tokenize into sentences
+        sentences = sent_tokenize(text)
+        
+        if len(sentences) <= 3:
+            return text
+        
+        # Remove punctuation and convert to lowercase for word frequency analysis
+        words = text.lower().translate(str.maketrans('', '', string.punctuation)).split()
+        
+        # Remove stopwords
+        try:
+            stop_words = set(stopwords.words('english'))
+        except:
+            stop_words = set()
+        
+        filtered_words = [word for word in words if word not in stop_words and len(word) > 2]
+        
+        # Calculate word frequencies
+        freq_dist = FreqDist(filtered_words)
+        
+        # Score sentences based on word frequency
+        sentence_scores = {}
+        for sentence in sentences:
+            sentence_words = sentence.lower().translate(str.maketrans('', '', string.punctuation)).split()
+            score = sum(freq_dist.get(word, 0) for word in sentence_words if word in filtered_words)
+            sentence_scores[sentence] = score
+        
+        # Get top sentences (approximately 30% of original)
+        num_summary_sentences = max(3, len(sentences) // 3)
+        top_sentences = sorted(sentence_scores.items(), key=lambda x: x[1], reverse=True)[:num_summary_sentences]
+        
+        # Sort by original order
+        top_sentences_ordered = sorted(top_sentences, key=lambda x: sentences.index(x[0]))
+        
+        summary = ' '.join([sent[0] for sent in top_sentences_ordered])
+        return summary
+        
+    except Exception as e:
+        st.warning(f"Summarization failed: {e}. Returning truncated text.")
+        return text[:500] + "..." if len(text) > 500 else text
 
 
 def generate_quiz(summary):
